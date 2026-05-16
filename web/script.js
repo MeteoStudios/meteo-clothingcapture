@@ -52,6 +52,84 @@ function removeGreenBackground(imageData) {
     return imageData;
 }
 
+// attempt to remove pink square
+function removeMagentaArtifact(imageData) {
+    const data = imageData.data;
+    const width = imageData.width;
+    const height = imageData.height;
+    const totalPixels = width * height;
+
+    function isMagentaHue(r, g, b) {
+        const rg = r - g;
+        const bg = b - g;
+        return (rg > 35 && bg > 18 &&
+                r > g + 30 && b > g + 18 &&
+                r > 45 && Math.abs(r - b) < Math.max(r, b) * 0.6);
+    }
+
+    const mask = new Uint8Array(totalPixels);
+    let magentaPixelCount = 0;
+    for (let i = 0; i < totalPixels; i++) {
+        const p = i * 4;
+        if (data[p + 3] < 50) continue;  // skip transparent
+        if (isMagentaHue(data[p], data[p + 1], data[p + 2])) {
+            mask[i] = 1;
+            magentaPixelCount++;
+        }
+    }
+
+    if (magentaPixelCount === 0) return 0;
+
+    if (magentaPixelCount / totalPixels > 0.02) {
+        return 0;
+    }
+
+    const visited = new Uint8Array(totalPixels);
+    const maxArtifactSize = Math.floor(totalPixels * 0.003);
+    let removed = 0;
+    const stack = new Int32Array(totalPixels);
+
+    for (let i = 0; i < totalPixels; i++) {
+        if (!mask[i] || visited[i]) continue;
+
+        let stackTop = 0;
+        stack[stackTop++] = i;
+        visited[i] = 1;
+        const component = [i];
+
+        while (stackTop > 0) {
+            const idx = stack[--stackTop];
+            const x = idx % width;
+            const y = (idx / width) | 0;
+
+            const neighbors = [
+                x > 0 ? idx - 1 : -1,
+                x < width - 1 ? idx + 1 : -1,
+                y > 0 ? idx - width : -1,
+                y < height - 1 ? idx + width : -1,
+            ];
+
+            for (let n = 0; n < 4; n++) {
+                const ni = neighbors[n];
+                if (ni >= 0 && mask[ni] && !visited[ni]) {
+                    visited[ni] = 1;
+                    stack[stackTop++] = ni;
+                    component.push(ni);
+                }
+            }
+        }
+
+        if (component.length <= maxArtifactSize) {
+            for (let j = 0; j < component.length; j++) {
+                data[component[j] * 4 + 3] = 0;
+                removed++;
+            }
+        }
+    }
+
+    return removed;
+}
+
 function findBoundingBox(imageData) {
     const data = imageData.data;
     const width = imageData.width;
@@ -147,6 +225,9 @@ function processImage(base64Image, callback) {
         let imageData = preCropImage(canvas, ctx);
 
         imageData = removeGreenBackground(imageData);
+
+        removeMagentaArtifact(imageData);
+
         ctx.putImageData(imageData, 0, 0);
 
         const bounds = findBoundingBox(imageData);
